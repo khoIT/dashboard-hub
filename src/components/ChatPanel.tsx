@@ -8,6 +8,7 @@ import {
   create_chart,
   create_combo_chart,
   update_chart,
+  add_metric_to_chart,
   delete_chart,
   create_dashboard,
   share_dashboard,
@@ -195,6 +196,10 @@ const ChatPanel: React.FC<Props> = ({
           const { chart_id, ...patch } = input as any;
           return update_chart(chart_id, patch, db, setDashboardsSync);
         }
+        case 'add_metric_to_chart': {
+          const { chart_id: amid, ...metric } = input as any;
+          return add_metric_to_chart(amid, metric, db, setDashboardsSync);
+        }
         case 'delete_chart':
           return delete_chart(input.chart_id as string, db, setDashboardsSync);
         case 'create_dashboard': {
@@ -223,7 +228,10 @@ const ChatPanel: React.FC<Props> = ({
     if (selectedChartId && activeDash) {
       const chart = activeDash.charts.find((c) => c.id === selectedChartId);
       if (chart) {
-        prompt += `\n\nSELECTED CHART (user is looking at this chart):\n- chart_id: "${chart.id}"\n- title: "${chart.title}"\n- metric: ${chart.metric_id}\n- type: ${chart.chart_type}\nWhen the user says "this chart" or "the selected chart" or asks for changes without specifying a chart, use chart_id "${chart.id}".`;
+        const metricsDesc = chart.metrics && chart.metrics.length > 0
+          ? chart.metrics.map((s) => `${s.metric_id} (${s.chart_type})`).join(', ')
+          : `${chart.metric_id} (${chart.chart_type})`;
+        prompt += `\n\nSELECTED CHART (user is focused on this chart — ALWAYS modify it, never create a new chart unless explicitly asked):\n- chart_id: "${chart.id}"\n- title: "${chart.title}"\n- metrics: ${metricsDesc}\n- type: ${chart.chart_type}\nACTION PRIORITY when a chart is selected:\n1. To ADD a metric → use add_metric_to_chart with chart_id "${chart.id}"\n2. To CHANGE style/color/type → use update_chart with chart_id "${chart.id}"\n3. To DELETE → use delete_chart with chart_id "${chart.id}"\n4. ONLY create a new chart if the user explicitly says "new chart" or "another chart"`;
       }
     }
     return prompt;

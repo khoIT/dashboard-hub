@@ -324,6 +324,74 @@ export function update_chart(
   return r;
 }
 
+export function add_metric_to_chart(
+  chartId: string,
+  newMetric: { metric_id: string; chart_type: ChartType; color?: string; comparison?: boolean; label?: string },
+  dashboards: Dashboard[],
+  setDashboards: (d: Dashboard[]) => void
+): { success: boolean; error?: string } {
+  const metric = getMetric(newMetric.metric_id);
+  if (!metric) {
+    const r = { success: false, error: `Unknown metric: ${newMetric.metric_id}` };
+    logCall('add_metric_to_chart', { chartId, newMetric } as Record<string, unknown>, r, false, [r.error]);
+    return r;
+  }
+  if (!metric.allowed_chart_types.includes(newMetric.chart_type)) {
+    const r = { success: false, error: `Chart type "${newMetric.chart_type}" not allowed for ${metric.label}. Allowed: ${metric.allowed_chart_types.join(', ')}` };
+    logCall('add_metric_to_chart', { chartId, newMetric } as Record<string, unknown>, r, false, [r.error]);
+    return r;
+  }
+
+  let found = false;
+  const updated = dashboards.map((d) => ({
+    ...d,
+    charts: d.charts.map((c) => {
+      if (c.id !== chartId) return c;
+      found = true;
+
+      const series: MetricSeries = {
+        metric_id: newMetric.metric_id,
+        chart_type: newMetric.chart_type,
+        axis: metric.unit === 'usd' ? 'right' : 'left',
+        color: newMetric.color,
+        comparison: newMetric.comparison ?? false,
+        label: newMetric.label,
+      };
+
+      // If chart has no metrics[] yet (single-metric chart), convert to combo
+      const existingMetrics: MetricSeries[] = c.metrics && c.metrics.length > 0
+        ? c.metrics
+        : [{
+            metric_id: c.metric_id,
+            chart_type: c.chart_type,
+            axis: (getMetric(c.metric_id)?.unit === 'usd' ? 'right' : 'left') as 'left' | 'right',
+            color: c.style.color,
+            comparison: c.comparison,
+          }];
+
+      const allMetrics = [...existingMetrics, series];
+      const newTitle = allMetrics.map((s) => s.label || getMetric(s.metric_id)?.label || s.metric_id).join(' + ');
+
+      return {
+        ...c,
+        metrics: allMetrics,
+        title: newTitle,
+      };
+    }),
+  }));
+
+  if (!found) {
+    const r = { success: false, error: `Chart ${chartId} not found` };
+    logCall('add_metric_to_chart', { chartId, newMetric } as Record<string, unknown>, r, false, [r.error]);
+    return r;
+  }
+
+  setDashboards(updated);
+  const r = { success: true };
+  logCall('add_metric_to_chart', { chartId, newMetric } as Record<string, unknown>, r, true);
+  return r;
+}
+
 export function delete_chart(
   chartId: string,
   dashboards: Dashboard[],
@@ -515,6 +583,22 @@ export const CLAUDE_TOOLS = [
     },
   },
   {
+    name: 'add_metric_to_chart',
+    description: 'Add a new metric series to an existing chart, turning it into a combo/multi-series chart if needed. Use this when the user wants to add a metric to a chart that already exists (especially the selected chart). Prefer this over create_combo_chart when modifying an existing chart.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        chart_id: { type: 'string', description: 'The ID of the chart to add the metric to' },
+        metric_id: { type: 'string', description: 'Metric ID from registry (e.g. nru, rev, dau)' },
+        chart_type: { type: 'string', enum: ['line', 'bar'], description: 'Chart type for this new series' },
+        color: { type: 'string', description: 'Optional color name or hex code' },
+        comparison: { type: 'boolean', description: 'If true, adds a dashed previous-period line for this metric' },
+        label: { type: 'string', description: 'Optional custom label for the series legend' },
+      },
+      required: ['chart_id', 'metric_id', 'chart_type'],
+    },
+  },
+  {
     name: 'delete_chart',
     description: 'Delete a chart from the dashboard by chart_id',
     input_schema: {
@@ -573,6 +657,7 @@ IMPORTANT RULES:
 4. When creating charts, prefer using templates when a matching one exists.
 5. If the user's request is ambiguous, ask clarifying questions about: chart type, time range, comparison, retention window.
 6. Always call create_dashboard before adding charts if no dashboard is active.
+7. SELECTED CHART PRIORITY: When a chart is selected (you'll see SELECTED CHART in context), ALWAYS prefer modifying/updating that chart over creating a new one. Use add_metric_to_chart to add series, update_chart to change properties. Only create a new chart if the user explicitly says "create a new chart" or "add another chart".
 
 METRIC REGISTRY:
 ${metricsInfo}
@@ -611,6 +696,12 @@ GUARDRAIL EXAMPLES:
 - "DAU pie chart" → BLOCKED: DAU only supports line/area. Suggest line or area instead.
 - "Retention D14 comparison" → BLOCKED: No previous period data for D14. Suggest D1 or D7 which have comparison data.
 - "Show me revenue stacked with DAU" → BLOCKED for stacking, but ALLOWED as combo chart with dual y-axis. Use create_combo_chart instead.
+
+ADDING METRICS TO EXISTING CHARTS:
+Use add_metric_to_chart to add a new metric series to an existing chart by chart_id. This converts single-metric charts to combo charts automatically.
+- Example: user selects a NPU line chart and says "add Revenue as bar" → call add_metric_to_chart with the selected chart_id, metric_id:"rev", chart_type:"bar"
+- Example: user says "add NRU as dashed orange line" → call add_metric_to_chart with metric_id:"nru", chart_type:"line", color:"orange", comparison:false
+- ALWAYS prefer add_metric_to_chart over create_combo_chart when a chart is selected and the user wants to add a metric to it.
 
 When creating multiple single-metric charts, call create_chart for each one separately.
 When the user wants multiple metrics on the SAME chart, use create_combo_chart.`;
