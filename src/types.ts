@@ -8,6 +8,16 @@ export interface ChartStyle {
   line_style: LineStyle;
   show_points: boolean;
   fill: boolean;
+  color?: string;
+}
+
+export interface MetricSeries {
+  metric_id: string;
+  chart_type: ChartType;
+  axis?: 'left' | 'right';
+  color?: string;
+  comparison?: boolean;
+  label?: string;
 }
 
 export interface ChartConfig {
@@ -19,12 +29,25 @@ export interface ChartConfig {
   comparison: boolean;
   style: ChartStyle;
   title: string;
+  metrics?: MetricSeries[];
+  date_filter?: boolean;
+  custom_start?: string;
+  custom_end?: string;
+}
+
+export interface GridLayoutItem {
+  i: string;  // chart id
+  x: number;
+  y: number;
+  w: number;  // columns (out of 12)
+  h: number;  // rows (each row ~150px)
 }
 
 export interface Dashboard {
   id: string;
   name: string;
   charts: ChartConfig[];
+  layouts?: GridLayoutItem[];
   created_at: string;
   shared?: { mode: 'viewer' | 'editor'; url: string };
 }

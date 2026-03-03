@@ -6,6 +6,7 @@ import {
   list_templates,
   validate_chart_config,
   create_chart,
+  create_combo_chart,
   update_chart,
   delete_chart,
   create_dashboard,
@@ -81,6 +82,10 @@ const ChatPanel: React.FC<Props> = ({
           return validate_chart_config(input as any);
         case 'create_chart': {
           const result = create_chart(input as any, db, aid, setDashboardsSync);
+          return result;
+        }
+        case 'create_combo_chart': {
+          const result = create_combo_chart(input as any, db, aid, setDashboardsSync);
           return result;
         }
         case 'update_chart': {
@@ -294,11 +299,11 @@ const ChatPanel: React.FC<Props> = ({
             <div className="space-y-1.5">
               {[
                 "Create dashboard called 'PTG Overview'",
-                'Add DAU trend and Revenue trend charts with comparison',
+                'Add a combo chart with NPU as line and Revenue as bar',
+                'Change the chart color to orange',
+                'Add a DAU chart with date filter',
                 'Show me a DAU pie chart',
-                'What metrics are available?',
                 'Add retention D7 trend with comparison to previous month',
-                'Share this dashboard as viewer',
               ].map((prompt) => (
                 <button
                   key={prompt}

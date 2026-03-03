@@ -1,9 +1,11 @@
 import { METRIC_REGISTRY, getMetric } from '../data/metric-registry';
 import { CHART_TEMPLATES } from '../data/chart-templates';
 import { getMetricData, getPrevMetricData } from '../data/game-data';
+import { resolveColor, getColorNames } from '../utils/colors';
 import type {
   ChartConfig,
   ChartStyle,
+  MetricSeries,
   Dashboard,
   ValidationResult,
   ToolCall,
@@ -135,6 +137,7 @@ export function create_chart(
     comparison?: boolean;
     style?: Partial<ChartStyle>;
     title?: string;
+    date_filter?: boolean;
   },
   dashboards: Dashboard[],
   activeDashboardId: string | null,
@@ -171,8 +174,10 @@ export function create_chart(
       line_style: config.style?.line_style || 'solid',
       show_points: config.style?.show_points ?? true,
       fill: config.style?.fill ?? (chartType === 'area'),
+      color: config.style?.color,
     },
     title: config.title || metric.label,
+    date_filter: config.date_filter,
   };
 
   if (activeDashboardId) {
@@ -187,21 +192,109 @@ export function create_chart(
   return r;
 }
 
+export function create_combo_chart(
+  config: {
+    metrics: { metric_id: string; chart_type: ChartType; color?: string; comparison?: boolean; label?: string }[];
+    time_range?: TimeRange;
+    title?: string;
+    date_filter?: boolean;
+    comparison?: boolean;
+  },
+  dashboards: Dashboard[],
+  activeDashboardId: string | null,
+  setDashboards: (d: Dashboard[]) => void
+): { chart_id: string; error?: string } {
+  if (!config.metrics || config.metrics.length < 1) {
+    const r = { chart_id: '', error: 'Combo chart requires at least 1 metric' };
+    logCall('create_combo_chart', config as Record<string, unknown>, r, false, [r.error]);
+    return r;
+  }
+
+  const errors: string[] = [];
+  const metricSeries: MetricSeries[] = [];
+
+  for (const ms of config.metrics) {
+    const metric = getMetric(ms.metric_id);
+    if (!metric) {
+      errors.push(`Unknown metric: ${ms.metric_id}`);
+      continue;
+    }
+    if (!metric.allowed_chart_types.includes(ms.chart_type)) {
+      errors.push(`Chart type "${ms.chart_type}" not allowed for ${metric.label}. Allowed: ${metric.allowed_chart_types.join(', ')}`);
+      continue;
+    }
+    metricSeries.push({
+      metric_id: ms.metric_id,
+      chart_type: ms.chart_type,
+      axis: metric.unit === 'usd' ? 'right' : 'left',
+      color: ms.color,
+      comparison: ms.comparison ?? config.comparison ?? false,
+      label: ms.label,
+    });
+  }
+
+  if (errors.length > 0) {
+    const r = { chart_id: '', error: errors.join('; ') };
+    logCall('create_combo_chart', config as Record<string, unknown>, r, false, errors);
+    return r;
+  }
+
+  const chartId = uid('chart');
+  const chart: ChartConfig = {
+    id: chartId,
+    metric_id: metricSeries[0].metric_id,
+    chart_type: metricSeries[0].chart_type,
+    time_range: config.time_range || 'last_30_days',
+    aggregation: 'daily',
+    comparison: config.comparison ?? false,
+    style: { line_style: 'solid', show_points: true, fill: false },
+    title: config.title || metricSeries.map((s) => s.label || getMetric(s.metric_id)?.label).join(' + '),
+    metrics: metricSeries,
+    date_filter: config.date_filter,
+  };
+
+  if (activeDashboardId) {
+    const updated = dashboards.map((d) =>
+      d.id === activeDashboardId ? { ...d, charts: [...d.charts, chart] } : d
+    );
+    setDashboards(updated);
+  }
+
+  const r = { chart_id: chartId };
+  logCall('create_combo_chart', config as Record<string, unknown>, r, true);
+  return r;
+}
+
 export function update_chart(
   chartId: string,
-  patch: Partial<ChartConfig>,
+  patch: Partial<ChartConfig> & { metric_id?: string },
   dashboards: Dashboard[],
   setDashboards: (d: Dashboard[]) => void
 ): { success: boolean; error?: string } {
   let found = false;
   let validationError: { success: false; error: string } | null = null;
 
+  // Extract routing hint metric_id (for targeting combo series) before merging
+  const targetMetricId = patch.metric_id;
+  const { metric_id: _routingHint, ...cleanPatch } = patch;
+
   const updated = dashboards.map((d) => ({
     ...d,
     charts: d.charts.map((c) => {
       if (c.id === chartId) {
         found = true;
-        const merged = { ...c, ...patch, style: { ...c.style, ...(patch.style || {}) } };
+        const merged = { ...c, ...cleanPatch, style: { ...c.style, ...(cleanPatch.style || {}) } };
+
+        // Combo chart color routing: write color to metrics[] entries, not just style
+        if (c.metrics && c.metrics.length > 0 && cleanPatch.style?.color) {
+          merged.metrics = c.metrics.map((s) => {
+            if (!targetMetricId || s.metric_id === targetMetricId) {
+              return { ...s, color: cleanPatch.style!.color };
+            }
+            return s;
+          });
+        }
+
         // Re-validate
         const v = validate_chart_config(merged);
         if (!v.valid) {
@@ -342,7 +435,7 @@ export const CLAUDE_TOOLS = [
   },
   {
     name: 'create_chart',
-    description: 'Create a new chart and add it to the active dashboard. Always validate first.',
+    description: 'Create a new single-metric chart and add it to the active dashboard. Always validate first. Supports custom color and interactive date filter.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -352,12 +445,14 @@ export const CLAUDE_TOOLS = [
         aggregation: { type: 'string', enum: ['daily', 'weekly'] },
         comparison: { type: 'boolean', description: 'Show previous period overlay' },
         title: { type: 'string', description: 'Chart title' },
+        date_filter: { type: 'boolean', description: 'Enable interactive date range picker on the chart' },
         style: {
           type: 'object',
           properties: {
             line_style: { type: 'string', enum: ['solid', 'dashed'] },
             show_points: { type: 'boolean' },
             fill: { type: 'boolean' },
+            color: { type: 'string', description: 'Color name (e.g. red, blue, green, orange, purple, pink, cyan, teal, amber, indigo) or hex code' },
           },
         },
       },
@@ -365,22 +460,54 @@ export const CLAUDE_TOOLS = [
     },
   },
   {
+    name: 'create_combo_chart',
+    description: 'Create a combo/multi-series chart. Each metric can have its own chart type (line/bar) and optional comparison overlay. USD metrics auto-map to right y-axis. Use this for: overlaying metrics (NPU line + Revenue bar), or same-metric with comparison (NPU trend + NPU prev as two lines). Set comparison:true per series to add a dashed previous-period line.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        metrics: {
+          type: 'array',
+          description: 'Array of metric series (1 or more). Each can opt-in to comparison independently.',
+          items: {
+            type: 'object',
+            properties: {
+              metric_id: { type: 'string', description: 'Metric ID from registry' },
+              chart_type: { type: 'string', enum: ['line', 'bar'], description: 'Chart type for this series' },
+              color: { type: 'string', description: 'Optional color name or hex' },
+              comparison: { type: 'boolean', description: 'If true, adds a dashed previous-period line for this metric (requires prev_available)' },
+              label: { type: 'string', description: 'Optional custom label for the series legend' },
+            },
+            required: ['metric_id', 'chart_type'],
+          },
+        },
+        time_range: { type: 'string', enum: ['last_7_days', 'last_14_days', 'last_30_days'] },
+        title: { type: 'string', description: 'Chart title' },
+        date_filter: { type: 'boolean', description: 'Enable interactive date range picker' },
+        comparison: { type: 'boolean', description: 'Global comparison flag: if true, all series with prev data get a comparison line' },
+      },
+      required: ['metrics'],
+    },
+  },
+  {
     name: 'update_chart',
-    description: 'Update an existing chart configuration by chart_id. Use this to change style, chart type, etc.',
+    description: 'Update an existing chart configuration by chart_id. Use this to change style, chart type, color, enable date filter, etc. For combo charts, include metric_id to target a specific series for color changes.',
     input_schema: {
       type: 'object' as const,
       properties: {
         chart_id: { type: 'string', description: 'The ID of the chart to update' },
+        metric_id: { type: 'string', description: 'Optional: for combo charts, specify which metric series to update (e.g. color change). If omitted on a combo chart, applies to all series.' },
         chart_type: { type: 'string', enum: ['line', 'area', 'bar'] },
         time_range: { type: 'string', enum: ['last_7_days', 'last_14_days', 'last_30_days'] },
         comparison: { type: 'boolean' },
         title: { type: 'string' },
+        date_filter: { type: 'boolean', description: 'Enable/disable interactive date range picker' },
         style: {
           type: 'object',
           properties: {
             line_style: { type: 'string', enum: ['solid', 'dashed'] },
             show_points: { type: 'boolean' },
             fill: { type: 'boolean' },
+            color: { type: 'string', description: 'Color name (red, blue, green, orange, purple, pink, cyan, teal, amber, indigo) or hex code' },
           },
         },
       },
@@ -456,10 +583,35 @@ ${templatesInfo}
 CURRENT STATE:
 ${dashInfo}
 
+COMBO CHARTS:
+Use create_combo_chart for multi-series charts. Supports 1+ metrics, each with its own chart type and optional comparison.
+- USD metrics (rev, rev_npu, rev_rpi*) auto-map to the RIGHT y-axis.
+- User metrics (dau, nru, npu, ruser*) auto-map to the LEFT y-axis.
+- Example: NPU as line + Revenue as bar → metrics: [{metric_id:"npu",chart_type:"line"},{metric_id:"rev",chart_type:"bar"}]
+- Color per series: {metric_id:"npu",chart_type:"line",color:"blue"}
+- COMPARISON: Set comparison:true per series (or globally) to add a dashed previous-period line for that metric.
+  Example: "NPU trend with comparison as line" → metrics: [{metric_id:"npu",chart_type:"line",comparison:true}]
+  This draws NPU Jan 2026 (solid) + NPU Dec 2025 (dashed) as two lines.
+- When the user says "trend and comparison", ask which comparison period they mean (previous month is Dec 2025 — the only available period).
+- A combo chart can have any number of series — do NOT hardcode to exactly 2.
+
+COLOR SUPPORT:
+Both create_chart and update_chart accept a color name in style.color.
+Available color names: ${getColorNames().join(', ')}.
+You can also pass hex codes like "#ff6600".
+Example single-metric chart: update_chart with style: {color: "red"}
+Example combo chart (target one series): update_chart with chart_id, metric_id: "rev", style: {color: "red"}
+IMPORTANT: For combo charts, you MUST include metric_id to specify which series to recolor. If omitted, ALL series get the same color.
+
+DATE FILTER:
+Set date_filter: true on create_chart, create_combo_chart, or update_chart to add an interactive date range picker to the chart.
+Users can then pick start/end dates directly on the chart to filter the data. The data range is Jan 2026.
+
 GUARDRAIL EXAMPLES:
 - "DAU pie chart" → BLOCKED: DAU only supports line/area. Suggest line or area instead.
 - "Retention D14 comparison" → BLOCKED: No previous period data for D14. Suggest D1 or D7 which have comparison data.
-- "Show me revenue stacked with DAU" → BLOCKED: Cannot stack different units (usd + users). Create separate charts.
+- "Show me revenue stacked with DAU" → BLOCKED for stacking, but ALLOWED as combo chart with dual y-axis. Use create_combo_chart instead.
 
-When creating multiple charts, call create_chart for each one separately.`;
+When creating multiple single-metric charts, call create_chart for each one separately.
+When the user wants multiple metrics on the SAME chart, use create_combo_chart.`;
 }

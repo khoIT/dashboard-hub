@@ -1,13 +1,36 @@
-import React from 'react';
+import React, { useRef, useMemo, useCallback } from 'react';
+import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
 import { LayoutDashboard, Share2, Plus } from 'lucide-react';
 import ChartCard from './ChartCard';
-import type { Dashboard } from '../types';
+import type { Dashboard, GridLayoutItem } from '../types';
+
+const COLS = 12;
+const ROW_HEIGHT = 150;
+const DEFAULT_W = 6;
+const DEFAULT_H = 2;
 
 interface Props {
   dashboard: Dashboard | null;
   onDeleteChart: (chartId: string) => void;
   onShare: () => void;
   onQuickAdd: () => void;
+  onLayoutChange: (layouts: GridLayoutItem[]) => void;
+  selectedChartId: string | null;
+  onSelectChart: (chartId: string | null) => void;
+}
+
+function buildLayout(dashboard: Dashboard) {
+  const saved = dashboard.layouts || [];
+  const savedMap = new Map(saved.map((l) => [l.i, l]));
+  return dashboard.charts.map((chart, idx) => {
+    const s = savedMap.get(chart.id);
+    if (s) return { i: s.i, x: s.x, y: s.y, w: s.w, h: s.h, minW: 3, minH: 2 };
+    const col = (idx * DEFAULT_W) % COLS;
+    const row = Math.floor((idx * DEFAULT_W) / COLS) * DEFAULT_H;
+    return { i: chart.id, x: col, y: row, w: DEFAULT_W, h: DEFAULT_H, minW: 3, minH: 2 };
+  });
 }
 
 const DashboardCanvas: React.FC<Props> = ({
@@ -15,7 +38,27 @@ const DashboardCanvas: React.FC<Props> = ({
   onDeleteChart,
   onShare,
   onQuickAdd,
+  onLayoutChange,
+  selectedChartId,
+  onSelectChart,
 }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const width = useContainerWidth(containerRef);
+
+  const layout = useMemo(() => (dashboard ? buildLayout(dashboard) : []), [dashboard]);
+
+  const handleLayoutChange = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (newLayout: any[]) => {
+      if (!dashboard) return;
+      const items: GridLayoutItem[] = newLayout.map((l: any) => ({
+        i: l.i, x: l.x, y: l.y, w: l.w, h: l.h,
+      }));
+      onLayoutChange(items);
+    },
+    [dashboard, onLayoutChange]
+  );
+
   if (!dashboard) {
     return (
       <div className="flex-1 flex items-center justify-center bg-bg">
@@ -35,7 +78,16 @@ const DashboardCanvas: React.FC<Props> = ({
   }
 
   return (
-    <div className="flex-1 bg-bg overflow-y-auto">
+    <div
+      className="flex-1 bg-bg overflow-y-auto"
+      ref={containerRef}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target === e.currentTarget || target.classList.contains('react-grid-layout')) {
+          onSelectChart(null);
+        }
+      }}
+    >
       {/* Dashboard header */}
       <div className="sticky top-0 z-10 bg-bg/90 backdrop-blur border-b border-border px-6 py-3 flex items-center justify-between">
         <div>
@@ -69,7 +121,7 @@ const DashboardCanvas: React.FC<Props> = ({
       </div>
 
       {/* Charts grid */}
-      <div className="p-6">
+      <div className="px-4 pt-4 pb-8">
         {dashboard.charts.length === 0 ? (
           <div className="border-2 border-dashed border-border rounded-xl p-12 text-center">
             <Plus size={32} className="mx-auto text-border mb-3" />
@@ -78,13 +130,39 @@ const DashboardCanvas: React.FC<Props> = ({
               Use the chatbot or Template Library to add charts
             </p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        ) : width > 0 ? (
+          <ResponsiveGridLayout
+            className="layout"
+            layouts={{ lg: layout }}
+            breakpoints={{ lg: 0 }}
+            cols={{ lg: COLS }}
+            rowHeight={ROW_HEIGHT}
+            width={width - 32}
+            isDraggable
+            isResizable
+            draggableHandle=".drag-handle"
+            onLayoutChange={handleLayoutChange}
+            compactType="vertical"
+            margin={[12, 12]}
+          >
             {dashboard.charts.map((chart) => (
-              <ChartCard key={chart.id} chart={chart} onDelete={onDeleteChart} />
+              <div
+                key={chart.id}
+                className={`cursor-pointer transition-shadow ${
+                  selectedChartId === chart.id
+                    ? 'ring-2 ring-accent rounded-xl shadow-lg shadow-accent/10'
+                    : ''
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectChart(selectedChartId === chart.id ? null : chart.id);
+                }}
+              >
+                <ChartCard chart={chart} onDelete={onDeleteChart} isSelected={selectedChartId === chart.id} />
+              </div>
             ))}
-          </div>
-        )}
+          </ResponsiveGridLayout>
+        ) : null}
       </div>
 
       {/* Share URL display */}

@@ -52,17 +52,34 @@ npx serve dist     # static preview
 - `list_metrics` / `list_templates` — discovery
 - `validate_chart_config` — guardrail enforcement
 - `create_chart` / `update_chart` / `delete_chart` — chart lifecycle
+- `create_combo_chart` — multi-metric charts with dual y-axes and per-series comparison
 - `create_dashboard` / `share_dashboard` — dashboard lifecycle
 - All calls logged to **Tool Call Log** with timestamps, params, results
 
-### 4. AI Chatbot (Claude API)
+### 4a. Combo Charts (Dual Y-Axis)
+- Overlay multiple metrics on one chart (e.g., NPU as line + Revenue as bar)
+- USD metrics auto-map to right y-axis, user metrics to left
+- Per-series comparison: each metric can independently show previous-period dashed overlay
+- Supports any number of series (not hardcoded to 2)
+
+### 4b. Color Customization
+- Natural language color names: red, blue, green, orange, purple, pink, cyan, teal, amber, indigo, etc.
+- Also accepts hex codes like `#ff6600`
+- Works on single-metric charts (`style.color`) and combo chart series (`metric_id` targeting)
+
+### 4c. Interactive Date Filter
+- Add `date_filter: true` to any chart to render inline date pickers
+- Users can drag start/end dates to dynamically filter the chart data (Jan 2026 range)
+- Works on both single-metric and combo charts
+
+### 5. AI Chatbot (Claude API)
 - Enter your Anthropic API key (stored in localStorage only)
 - System prompt includes full metric registry + active dashboard state
 - Claude uses `tool_use` to call MCP tools
 - Multi-turn tool execution loop (up to 5 rounds)
 - Tool call transcript visible inline + in dedicated log panel
 
-### 5. Persistence
+### 6. Persistence
 - All dashboards + charts saved to `localStorage`
 - Survives page refreshes
 
@@ -107,10 +124,30 @@ Strictly uses data from `prototypes/ptg-report-2026-01/data.js`:
 2. **Observe:** AI explains D14 has no previous period data, suggests D1 or D7 which do
 3. **Demonstrates:** Guardrail checks data availability, not just metric existence
 
-### Scenario 6: Guardrail — Cross-Unit Stacking
-1. Type: `Create a chart that stacks Revenue and DAU together`
-2. **Observe:** AI explains you can't combine USD and user-count metrics in one chart, creates them separately
-3. **Demonstrates:** Semantic guardrail — the registry enforces unit coherence
+### Scenario 6: Combo Chart — NPU + Revenue (Dual Y-Axis)
+1. Type: `Add a combo chart with NPU as line and Revenue as bar`
+2. **Observe:** AI calls `create_combo_chart` → single chart with NPU line (left axis) + Revenue bars (right axis)
+3. **Demonstrates:** Dual y-axis rendering, automatic axis mapping based on metric unit
+
+### Scenario 6a: Combo Chart — Change Series Color
+1. (After Scenario 6) Type: `Change color of revenue to red`
+2. **Observe:** AI calls `update_chart` with `metric_id: "rev"` + `style.color: "red"` → Revenue bars turn red
+3. **Demonstrates:** Per-series color targeting on combo charts
+
+### Scenario 6b: Combo Chart — NPU Trend + Comparison
+1. Type: `Show me NPU trend with comparison to previous month as lines`
+2. **Observe:** AI calls `create_combo_chart` with `comparison: true` → NPU Jan 2026 (solid) + NPU Dec 2025 (dashed)
+3. **Demonstrates:** Per-series comparison overlay, same-metric multi-line rendering
+
+### Scenario 6c: Color Customization
+1. Type: `Create a green DAU line chart`
+2. **Observe:** AI calls `create_chart` with `style: { color: "green" }` → chart renders in green
+3. **Demonstrates:** Natural language color names resolved to hex codes
+
+### Scenario 6d: Interactive Date Filter
+1. Type: `Add a DAU chart with date filter`
+2. **Observe:** Chart appears with inline date picker. User can change start/end dates and chart updates.
+3. **Demonstrates:** Interactive date range filtering without prompting the AI again
 
 ### Scenario 7: Metric Discovery via LLM
 1. Type: `What metrics are available?`
@@ -194,13 +231,15 @@ src/
 ├── App.tsx                    # Main app, state management, CRUD handlers
 ├── main.tsx                   # Entry point
 ├── index.css                  # Tailwind imports + global styles
-├── types.ts                   # Shared TypeScript types
+├── types.ts                   # Shared TypeScript types (incl. MetricSeries, ChartConfig)
+├── utils/
+│   └── colors.ts              # Color name → hex resolver
 ├── data/
-│   ├── game-data.ts           # PTG data (copied from data.js)
+│   ├── game-data.ts           # PTG data + date range filtering
 │   ├── metric-registry.ts     # Governance layer (14 metrics)
 │   └── chart-templates.ts     # Certified configs (7 templates)
 ├── mcp/
-│   └── tools.ts               # MCP tool implementations + Claude tool defs
+│   └── tools.ts               # MCP tool implementations + Claude tool defs (incl. create_combo_chart)
 └── components/
     ├── DashboardNav.tsx        # Left panel: dashboard list + nav
     ├── DashboardCanvas.tsx     # Center panel: chart grid + header

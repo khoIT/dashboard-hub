@@ -240,3 +240,23 @@ export function getPrevMetricData(
     values: sliced.map((r) => +(r[field] as number) || 0),
   };
 }
+
+export function getMetricDataByDateRange(
+  field: string,
+  source: string,
+  startDate: string,
+  endDate: string
+): { labels: string[]; values: number[] } {
+  const isRevenue = source.includes('REVENUE');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data: any[] = isRevenue ? DAILY_REVENUE_CURRENT : DAILY_USERS_CURRENT;
+  const filtered = data.filter((r) => r.date >= startDate && r.date <= endDate);
+  const fmtDate = (d: string) => {
+    const dt = new Date(d);
+    return (dt.getMonth() + 1) + '/' + dt.getDate();
+  };
+  return {
+    labels: filtered.map((r) => fmtDate(r.date)),
+    values: filtered.map((r) => +(r[field]) || 0),
+  };
+}
