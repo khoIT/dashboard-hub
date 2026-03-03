@@ -40,9 +40,13 @@ declare module 'react-grid-layout' {
   export const ResponsiveGridLayout: React.ComponentType<ResponsiveGridLayoutProps>;
 
   export function useContainerWidth(
-    ref: React.RefObject<HTMLElement | null>,
-    options?: { debounceMs?: number }
-  ): number;
+    options?: { measureBeforeMount?: boolean; initialWidth?: number }
+  ): {
+    width: number;
+    mounted: boolean;
+    containerRef: React.RefObject<HTMLDivElement>;
+    measureWidth: () => void;
+  };
 }
 
 declare module 'react-grid-layout/css/styles.css' {}

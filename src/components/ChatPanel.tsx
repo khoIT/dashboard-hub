@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Key, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Bot, User, RotateCcw } from 'lucide-react';
+import { Send, Key, ChevronDown, ChevronRight, AlertTriangle, CheckCircle, Bot, User, RotateCcw, Plus, MessageSquare, Trash2 } from 'lucide-react';
 import type { ChatMessage, ToolCall, Dashboard } from '../types';
 import {
   list_metrics,
@@ -15,12 +15,48 @@ import {
   getSystemPrompt,
 } from '../mcp/tools';
 
+// ── Chat History Types & Helpers ──────────────────────────────
+interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  created_at: string;
+  updated_at: string;
+}
+
+const HISTORY_KEY = 'dashboard-hub-chat-history';
+const ACTIVE_CONV_KEY = 'dashboard-hub-active-conv';
+
+function loadConversations(): Conversation[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveConversations(convs: Conversation[]) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(convs));
+}
+
+function newConversation(): Conversation {
+  return {
+    id: `conv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    title: 'New Chat',
+    messages: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+// ── Component ──────────────────────────────────────────────────
+
 interface Props {
   dashboards: Dashboard[];
   activeDashboardId: string | null;
   setDashboards: (d: Dashboard[]) => void;
   setActiveDashboardId: (id: string) => void;
   toolCallLog: ToolCall[];
+  selectedChartId: string | null;
 }
 
 const ChatPanel: React.FC<Props> = ({
@@ -29,15 +65,82 @@ const ChatPanel: React.FC<Props> = ({
   setDashboards,
   setActiveDashboardId,
   toolCallLog,
+  selectedChartId,
 }) => {
   const [apiKey, setApiKey] = useState(localStorage.getItem('claude-api-key') || '');
   const [showKeyInput, setShowKeyInput] = useState(!apiKey);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversations, setConversationsRaw] = useState<Conversation[]>(loadConversations);
+  const [activeConvId, setActiveConvId] = useState<string>(
+    () => localStorage.getItem(ACTIVE_CONV_KEY) || ''
+  );
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [expandedCalls, setExpandedCalls] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Ensure there's always an active conversation
+  useEffect(() => {
+    if (conversations.length === 0) {
+      const c = newConversation();
+      setConversationsRaw([c]);
+      saveConversations([c]);
+      setActiveConvId(c.id);
+      localStorage.setItem(ACTIVE_CONV_KEY, c.id);
+    } else if (!activeConvId || !conversations.find((c) => c.id === activeConvId)) {
+      setActiveConvId(conversations[0].id);
+      localStorage.setItem(ACTIVE_CONV_KEY, conversations[0].id);
+    }
+  }, [conversations, activeConvId]);
+
+  const activeConv = conversations.find((c) => c.id === activeConvId);
+  const messages = activeConv?.messages || [];
+
+  const setConversations = useCallback((convs: Conversation[]) => {
+    setConversationsRaw(convs);
+    saveConversations(convs);
+  }, []);
+
+  const updateActiveMessages = useCallback((msgs: ChatMessage[]) => {
+    setConversationsRaw((prev) => {
+      const updated = prev.map((c) => {
+        if (c.id !== activeConvId) return c;
+        const title = c.messages.length === 0 && msgs.length > 0
+          ? msgs[0].content.slice(0, 40) + (msgs[0].content.length > 40 ? '...' : '')
+          : c.title;
+        return { ...c, messages: msgs, title, updated_at: new Date().toISOString() };
+      });
+      saveConversations(updated);
+      return updated;
+    });
+  }, [activeConvId]);
+
+  const handleNewConversation = () => {
+    const c = newConversation();
+    const updated = [c, ...conversations];
+    setConversations(updated);
+    setActiveConvId(c.id);
+    localStorage.setItem(ACTIVE_CONV_KEY, c.id);
+    setShowHistory(false);
+  };
+
+  const handleDeleteConversation = (convId: string) => {
+    const updated = conversations.filter((c) => c.id !== convId);
+    setConversations(updated);
+    if (convId === activeConvId) {
+      if (updated.length > 0) {
+        setActiveConvId(updated[0].id);
+        localStorage.setItem(ACTIVE_CONV_KEY, updated[0].id);
+      }
+    }
+  };
+
+  const handleSelectConversation = (convId: string) => {
+    setActiveConvId(convId);
+    localStorage.setItem(ACTIVE_CONV_KEY, convId);
+    setShowHistory(false);
+  };
 
   // Mutable refs so sequential tool calls within one Claude response
   // always see the latest state (fixes the stale-closure bug).
@@ -113,6 +216,19 @@ const ChatPanel: React.FC<Props> = ({
     [setDashboardsSync, setActiveIdSync]
   );
 
+  // Build system prompt with optional selected chart context
+  const buildSystemPrompt = useCallback(() => {
+    const activeDash = dashboardsRef.current.find((d) => d.id === activeIdRef.current) || null;
+    let prompt = getSystemPrompt(activeDash);
+    if (selectedChartId && activeDash) {
+      const chart = activeDash.charts.find((c) => c.id === selectedChartId);
+      if (chart) {
+        prompt += `\n\nSELECTED CHART (user is looking at this chart):\n- chart_id: "${chart.id}"\n- title: "${chart.title}"\n- metric: ${chart.metric_id}\n- type: ${chart.chart_type}\nWhen the user says "this chart" or "the selected chart" or asks for changes without specifying a chart, use chart_id "${chart.id}".`;
+      }
+    }
+    return prompt;
+  }, [selectedChartId]);
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     if (!apiKey) {
@@ -126,7 +242,7 @@ const ChatPanel: React.FC<Props> = ({
       content: input.trim(),
     };
     const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
+    updateActiveMessages(newMessages);
     setInput('');
     setLoading(true);
 
@@ -155,7 +271,7 @@ const ChatPanel: React.FC<Props> = ({
           body: JSON.stringify({
             model: 'claude-sonnet-4-20250514',
             max_tokens: 4096,
-            system: getSystemPrompt(dashboardsRef.current.find((d) => d.id === activeIdRef.current) || null),
+            system: buildSystemPrompt(),
             tools: CLAUDE_TOOLS,
             messages: currentMessages,
           }),
@@ -214,14 +330,14 @@ const ChatPanel: React.FC<Props> = ({
         content: finalText || 'Done! I executed the requested actions.',
         toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
       };
-      setMessages((prev) => [...prev, assistantMsg]);
+      updateActiveMessages([...newMessages, assistantMsg]);
     } catch (err: any) {
       const errorMsg: ChatMessage = {
         id: `msg_${Date.now()}_err`,
         role: 'assistant',
         content: `Error: ${err.message}. Please check your API key and try again.`,
       };
-      setMessages((prev) => [...prev, errorMsg]);
+      updateActiveMessages([...newMessages, errorMsg]);
     } finally {
       setLoading(false);
     }
@@ -244,15 +360,20 @@ const ChatPanel: React.FC<Props> = ({
           <span className="text-sm font-semibold">AI Assistant</span>
         </div>
         <div className="flex items-center gap-1">
-          {messages.length > 0 && (
-            <button
-              onClick={() => setMessages([])}
-              className="p-1.5 rounded-md text-muted hover:text-text hover:bg-bg3 transition-colors"
-              title="Clear chat"
-            >
-              <RotateCcw size={13} />
-            </button>
-          )}
+          <button
+            onClick={handleNewConversation}
+            className="p-1.5 rounded-md text-muted hover:text-text hover:bg-bg3 transition-colors"
+            title="New conversation"
+          >
+            <Plus size={13} />
+          </button>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className={`p-1.5 rounded-md transition-colors ${showHistory ? 'text-accent bg-bg3' : 'text-muted hover:text-text hover:bg-bg3'}`}
+            title="Chat history"
+          >
+            <MessageSquare size={13} />
+          </button>
           <button
             onClick={() => setShowKeyInput(!showKeyInput)}
             className={`p-1.5 rounded-md transition-colors ${
@@ -264,6 +385,14 @@ const ChatPanel: React.FC<Props> = ({
           </button>
         </div>
       </div>
+
+      {/* Selected chart indicator */}
+      {selectedChartId && (
+        <div className="px-4 py-2 border-b border-border bg-accent/5 flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+          <span className="text-[10px] text-accent">Selected: <span className="font-mono">{selectedChartId}</span></span>
+        </div>
+      )}
 
       {/* API Key input */}
       {showKeyInput && (
@@ -287,6 +416,36 @@ const ChatPanel: React.FC<Props> = ({
             </button>
           </div>
           <p className="text-[10px] text-muted mt-1">Stored locally only. Never sent to any server except Anthropic.</p>
+        </div>
+      )}
+
+      {/* Chat History Panel */}
+      {showHistory && (
+        <div className="border-b border-border max-h-[300px] overflow-y-auto">
+          <div className="px-4 py-2 text-[10px] text-muted uppercase tracking-wider font-semibold bg-bg3/30">
+            Conversations ({conversations.length})
+          </div>
+          {conversations.map((conv) => (
+            <div
+              key={conv.id}
+              className={`flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors ${
+                conv.id === activeConvId ? 'bg-accent/10 text-accent' : 'hover:bg-bg3/50 text-text'
+              }`}
+              onClick={() => handleSelectConversation(conv.id)}
+            >
+              <MessageSquare size={12} className="shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-medium truncate">{conv.title}</p>
+                <p className="text-[9px] text-muted">{conv.messages.length} msgs · {new Date(conv.updated_at).toLocaleDateString()}</p>
+              </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
+                className="shrink-0 p-1 text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity"
+              >
+                <Trash2 size={10} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 

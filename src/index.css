@@ -35,3 +35,32 @@ body {
 canvas {
   max-width: 100% !important;
 }
+
+/* react-grid-layout overrides */
+.react-grid-item > .react-resizable-handle {
+  background: none !important;
+}
+.react-grid-item > .react-resizable-handle::after {
+  border-right-color: #6366f1 !important;
+  border-bottom-color: #6366f1 !important;
+}
+.react-grid-item.react-grid-placeholder {
+  background: #6366f1 !important;
+  opacity: 0.15 !important;
+  border-radius: 12px;
+}
+.react-grid-item {
+  transition: none !important;
+}
+.react-grid-item.cssTransforms {
+  transition: transform 200ms ease !important;
+}
+.react-grid-item.resizing {
+  transition: none !important;
+}
+.drag-handle {
+  cursor: grab;
+}
+.drag-handle:active {
+  cursor: grabbing;
+}

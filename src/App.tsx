@@ -7,7 +7,7 @@ import TemplateLibrary from './components/TemplateLibrary';
 import { CHART_TEMPLATES } from './data/chart-templates';
 import { getMetric } from './data/metric-registry';
 import { setToolCallLogger, create_chart, create_dashboard, share_dashboard } from './mcp/tools';
-import type { Dashboard, ToolCall } from './types';
+import type { Dashboard, ToolCall, GridLayoutItem } from './types';
 
 const STORAGE_KEY = 'dashboard-hub-dashboards';
 
@@ -31,6 +31,7 @@ const App: React.FC = () => {
   );
   const [activePanel, setActivePanel] = useState<'chat' | 'metrics' | 'templates'>('chat');
   const [toolCallLog, setToolCallLog] = useState<ToolCall[]>([]);
+  const [selectedChartId, setSelectedChartId] = useState<string | null>(null);
 
   // Wrap setDashboards to auto-save
   const setDashboards = useCallback((d: Dashboard[]) => {
@@ -105,6 +106,14 @@ const App: React.FC = () => {
     );
   };
 
+  const handleLayoutChange = useCallback((layouts: GridLayoutItem[]) => {
+    if (!activeDashboardId) return;
+    const updated = dashboards.map((d) =>
+      d.id === activeDashboardId ? { ...d, layouts } : d
+    );
+    setDashboards(updated);
+  }, [activeDashboardId, dashboards, setDashboards]);
+
   const activeDashboard = dashboards.find((d) => d.id === activeDashboardId) || null;
 
   return (
@@ -127,6 +136,9 @@ const App: React.FC = () => {
         onDeleteChart={handleDeleteChart}
         onShare={handleShare}
         onQuickAdd={handleQuickAdd}
+        onLayoutChange={handleLayoutChange}
+        selectedChartId={selectedChartId}
+        onSelectChart={setSelectedChartId}
       />
 
       {/* Right: Panel (Chat / Metrics / Templates) */}
@@ -137,6 +149,7 @@ const App: React.FC = () => {
           setDashboards={setDashboards}
           setActiveDashboardId={setActiveDashboardId}
           toolCallLog={toolCallLog}
+          selectedChartId={selectedChartId}
         />
       )}
       {activePanel === 'metrics' && (

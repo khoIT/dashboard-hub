@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -42,8 +42,7 @@ const DashboardCanvas: React.FC<Props> = ({
   selectedChartId,
   onSelectChart,
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const width = useContainerWidth(containerRef);
+  const { width, containerRef } = useContainerWidth({ initialWidth: 800 });
 
   const layout = useMemo(() => (dashboard ? buildLayout(dashboard) : []), [dashboard]);
 

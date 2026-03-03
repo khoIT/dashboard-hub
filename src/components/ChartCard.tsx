@@ -54,7 +54,7 @@ const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
 
   // ── COMBO CHART ────────────────────────────────────────────
   if (isCombo) {
-    return renderComboChart(chart, onDelete, dateStart, dateEnd, filterActive, setDateStart, setDateEnd, setFilterActive);
+    return renderComboChart(chart, onDelete, dateStart, dateEnd, filterActive, setDateStart, setDateEnd, setFilterActive, isSelected);
   }
 
   // ── SINGLE-METRIC CHART (original logic preserved) ─────────
@@ -249,6 +249,7 @@ function renderComboChart(
   setDateStart: (v: string) => void,
   setDateEnd: (v: string) => void,
   setFilterActive: (v: boolean) => void,
+  isSelected?: boolean,
 ) {
   const seriesList = chart.metrics!;
   const datasets: any[] = [];
@@ -364,10 +365,10 @@ function renderComboChart(
   };
 
   return (
-    <div className="bg-bg2 border border-border rounded-xl p-4 group relative">
+    <div className={`bg-bg2 border rounded-xl p-4 group relative h-full flex flex-col ${isSelected ? 'border-accent' : 'border-border'}`}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <GripVertical size={14} className="text-muted opacity-0 group-hover:opacity-100 cursor-grab" />
+          <GripVertical size={14} className="drag-handle text-muted opacity-0 group-hover:opacity-100 cursor-grab" />
           <h3 className="text-xs font-medium text-muted uppercase tracking-wide">
             {chart.title}
           </h3>
@@ -403,7 +404,7 @@ function renderComboChart(
           setFilterActive={setFilterActive}
         />
       )}
-      <div className="h-[200px]">
+      <div className="flex-1 min-h-0">
         <Chart type="bar" data={chartData} options={options} />
       </div>
       <div className="mt-2 text-[10px] text-muted">
