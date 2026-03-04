@@ -145,19 +145,13 @@ const DashboardCanvas: React.FC<Props> = ({
             margin={[12, 12]}
           >
             {dashboard.charts.map((chart) => (
-              <div
-                key={chart.id}
-                className={`cursor-pointer transition-shadow ${
-                  selectedChartId === chart.id
-                    ? 'ring-2 ring-accent rounded-xl shadow-lg shadow-accent/10'
-                    : ''
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectChart(selectedChartId === chart.id ? null : chart.id);
-                }}
-              >
-                <ChartCard chart={chart} onDelete={onDeleteChart} isSelected={selectedChartId === chart.id} />
+              <div key={chart.id}>
+                <ChartCard
+                  chart={chart}
+                  onDelete={onDeleteChart}
+                  isSelected={selectedChartId === chart.id}
+                  onToggleAI={() => onSelectChart(selectedChartId === chart.id ? null : chart.id)}
+                />
               </div>
             ))}
           </ResponsiveGridLayout>

@@ -677,7 +677,8 @@ Use create_combo_chart for multi-series charts. Supports 1+ metrics, each with i
 - COMPARISON: Set comparison:true per series (or globally) to add a dashed previous-period line for that metric.
   Example: "NPU trend with comparison as line" → metrics: [{metric_id:"npu",chart_type:"line",comparison:true}]
   This draws NPU Jan 2026 (solid) + NPU Dec 2025 (dashed) as two lines.
-- When the user says "trend and comparison", ask which comparison period they mean (previous month is Dec 2025 — the only available period).
+- When the user says "trend and comparison", the previous period is always the month before the latest (Dec 2025 vs Jan 2026).
+- Available data range: Aug 1, 2025 – Jan 31, 2026 (6 months). Use date_filter:true for custom date ranges.
 - A combo chart can have any number of series — do NOT hardcode to exactly 2.
 
 COLOR SUPPORT:
@@ -690,7 +691,10 @@ IMPORTANT: For combo charts, you MUST include metric_id to specify which series 
 
 DATE FILTER:
 Set date_filter: true on create_chart, create_combo_chart, or update_chart to add an interactive date range picker to the chart.
-Users can then pick start/end dates directly on the chart to filter the data. The data range is Jan 2026.
+Users can then pick start/end dates directly on the chart to filter the data visually.
+Available data range: Aug 1, 2025 – Jan 31, 2026 (6 months, 184 days).
+The date filter is INTERACTIVE — users can change dates directly on the chart without talking to you again.
+When users ask for date filtering or custom date ranges, ALWAYS enable date_filter: true.
 
 GUARDRAIL EXAMPLES:
 - "DAU pie chart" → BLOCKED: DAU only supports line/area. Suggest line or area instead.

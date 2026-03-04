@@ -11,8 +11,8 @@ import {
   Legend,
 } from 'chart.js';
 import { Chart, Line, Bar } from 'react-chartjs-2';
-import { X, GripVertical, Calendar } from 'lucide-react';
-import { getMetricData, getPrevMetricData, getMetricDataByDateRange } from '../data/game-data';
+import { X, GripVertical, Calendar, MessageSquare } from 'lucide-react';
+import { getMetricData, getPrevMetricData, getMetricDataByDateRange, DATA_RANGE } from '../data/game-data';
 import { getMetric } from '../data/metric-registry';
 import { resolveColor } from '../utils/colors';
 import type { ChartConfig } from '../types';
@@ -32,6 +32,7 @@ interface Props {
   chart: ChartConfig;
   onDelete: (id: string) => void;
   isSelected?: boolean;
+  onToggleAI?: () => void;
 }
 
 const ACCENT = '#6366f1';
@@ -44,28 +45,34 @@ const formatUsers = (v: number) =>
 const formatUsd = (v: number) =>
   v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? '$' + (v / 1e3).toFixed(1) + 'K' : '$' + v.toFixed(0);
 
-const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
+const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected, onToggleAI }) => {
   const isCombo = chart.metrics && chart.metrics.length > 0;
 
-  // Date filter local state
-  const [dateStart, setDateStart] = useState(chart.custom_start || '2026-01-01');
-  const [dateEnd, setDateEnd] = useState(chart.custom_end || '2026-01-31');
-  const [filterActive, setFilterActive] = useState(!!chart.custom_start);
+  // Date filter local state — defaults to last 30 days of available range
+  const defaultEnd = DATA_RANGE.end;
+  const defaultStart = (() => {
+    const d = new Date(defaultEnd);
+    d.setDate(d.getDate() - 29);
+    return d.toISOString().slice(0, 10);
+  })();
+  const [dateStart, setDateStart] = useState(chart.custom_start || defaultStart);
+  const [dateEnd, setDateEnd] = useState(chart.custom_end || defaultEnd);
+  const [wasModified, setWasModified] = useState(false);
 
   // ── COMBO CHART ────────────────────────────────────────────
   if (isCombo) {
-    return renderComboChart(chart, onDelete, dateStart, dateEnd, filterActive, setDateStart, setDateEnd, setFilterActive, isSelected);
+    return renderComboChart(chart, onDelete, dateStart, dateEnd, setDateStart, setDateEnd, wasModified, setWasModified, defaultStart, defaultEnd, isSelected, onToggleAI);
   }
 
   // ── SINGLE-METRIC CHART (original logic preserved) ─────────
   const metric = getMetric(chart.metric_id);
   if (!metric) return null;
 
-  const current = (chart.date_filter && filterActive)
+  const current = chart.date_filter
     ? getMetricDataByDateRange(metric.source.field, metric.source.variable, dateStart, dateEnd)
     : getMetricData(metric.source.field, metric.source.variable, chart.time_range);
   const prev =
-    chart.comparison && metric.prev_available && !(chart.date_filter && filterActive)
+    chart.comparison && metric.prev_available && !chart.date_filter
       ? getPrevMetricData(metric.source.field, metric.source.variable, chart.time_range)
       : null;
 
@@ -78,7 +85,7 @@ const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
 
   const datasets: any[] = [
     {
-      label: 'Jan 2026',
+      label: current.labels[0] + ' – ' + current.labels[current.labels.length - 1],
       data: current.values,
       borderColor: mainColor,
       backgroundColor:
@@ -98,7 +105,7 @@ const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
 
   if (prev) {
     datasets.push({
-      label: 'Dec 2025',
+      label: prev.labels[0] + ' – ' + prev.labels[prev.labels.length - 1],
       data: prev.values,
       borderColor: CYAN,
       backgroundColor:
@@ -172,6 +179,19 @@ const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
               {chart.style.color}
             </span>
           )}
+          {onToggleAI && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleAI(); }}
+              title={isSelected ? 'Deselect from AI assistant' : 'Send to AI assistant'}
+              className={`transition-opacity ${
+                isSelected
+                  ? 'text-accent opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 text-muted hover:text-accent'
+              }`}
+            >
+              <MessageSquare size={14} />
+            </button>
+          )}
           <button
             onClick={() => onDelete(chart.id)}
             className="opacity-0 group-hover:opacity-100 text-muted hover:text-red-400 transition-opacity"
@@ -184,10 +204,12 @@ const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
         <DateFilterBar
           dateStart={dateStart}
           dateEnd={dateEnd}
-          filterActive={filterActive}
-          setDateStart={setDateStart}
-          setDateEnd={setDateEnd}
-          setFilterActive={setFilterActive}
+          wasModified={wasModified}
+          defaultStart={defaultStart}
+          defaultEnd={defaultEnd}
+          setDateStart={(v) => { setDateStart(v); setWasModified(true); }}
+          setDateEnd={(v) => { setDateEnd(v); setWasModified(true); }}
+          onReset={() => { setDateStart(defaultStart); setDateEnd(defaultEnd); setWasModified(false); }}
         />
       )}
       <div className="flex-1 min-h-0">
@@ -202,39 +224,48 @@ const ChartCard: React.FC<Props> = ({ chart, onDelete, isSelected }) => {
 
 // ── Date Filter Bar ────────────────────────────────────────────
 function DateFilterBar({
-  dateStart, dateEnd, filterActive, setDateStart, setDateEnd, setFilterActive,
+  dateStart, dateEnd, wasModified, defaultStart, defaultEnd, setDateStart, setDateEnd, onReset,
 }: {
-  dateStart: string; dateEnd: string; filterActive: boolean;
-  setDateStart: (v: string) => void; setDateEnd: (v: string) => void; setFilterActive: (v: boolean) => void;
+  dateStart: string; dateEnd: string; wasModified: boolean;
+  defaultStart: string; defaultEnd: string;
+  setDateStart: (v: string) => void; setDateEnd: (v: string) => void; onReset: () => void;
 }) {
   return (
-    <div className="flex items-center gap-2 mb-3 bg-bg3/50 rounded-lg px-3 py-1.5">
+    <div
+      className="flex items-center gap-2 mb-3 bg-bg3/50 rounded-lg px-3 py-1.5 relative z-10"
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+    >
       <Calendar size={12} className="text-accent shrink-0" />
       <input
         type="date"
         value={dateStart}
-        min="2026-01-01"
-        max="2026-01-31"
-        onChange={(e) => { setDateStart(e.target.value); setFilterActive(true); }}
-        className="bg-bg border border-border rounded px-2 py-0.5 text-[10px] text-text outline-none focus:border-accent"
+        min={DATA_RANGE.start}
+        max={DATA_RANGE.end}
+        onChange={(e) => setDateStart(e.target.value)}
+        onClick={(e) => { try { (e.target as HTMLInputElement).showPicker(); } catch { /* unsupported */ } }}
+        className="bg-bg border border-border rounded px-2 py-0.5 text-[11px] text-text outline-none focus:border-accent cursor-pointer"
       />
       <span className="text-[10px] text-muted">to</span>
       <input
         type="date"
         value={dateEnd}
-        min="2026-01-01"
-        max="2026-01-31"
-        onChange={(e) => { setDateEnd(e.target.value); setFilterActive(true); }}
-        className="bg-bg border border-border rounded px-2 py-0.5 text-[10px] text-text outline-none focus:border-accent"
+        min={DATA_RANGE.start}
+        max={DATA_RANGE.end}
+        onChange={(e) => setDateEnd(e.target.value)}
+        onClick={(e) => { try { (e.target as HTMLInputElement).showPicker(); } catch { /* unsupported */ } }}
+        className="bg-bg border border-border rounded px-2 py-0.5 text-[11px] text-text outline-none focus:border-accent cursor-pointer"
       />
-      {filterActive && (
+      {wasModified && (
         <button
-          onClick={() => setFilterActive(false)}
+          onClick={onReset}
           className="text-[10px] text-accent hover:text-accent/80 ml-1"
         >
           Reset
         </button>
       )}
+      <span className="text-[9px] text-muted/60 ml-auto shrink-0">Aug 2025 – Jan 2026</span>
     </div>
   );
 }
@@ -245,11 +276,14 @@ function renderComboChart(
   onDelete: (id: string) => void,
   dateStart: string,
   dateEnd: string,
-  filterActive: boolean,
   setDateStart: (v: string) => void,
   setDateEnd: (v: string) => void,
-  setFilterActive: (v: boolean) => void,
+  wasModified: boolean,
+  setWasModified: (v: boolean) => void,
+  defaultStart: string,
+  defaultEnd: string,
   isSelected?: boolean,
+  onToggleAI?: () => void,
 ) {
   const seriesList = chart.metrics!;
   const datasets: any[] = [];
@@ -261,7 +295,7 @@ function renderComboChart(
     const m = getMetric(s.metric_id);
     if (!m) return;
 
-    const data = (chart.date_filter && filterActive)
+    const data = chart.date_filter
       ? getMetricDataByDateRange(m.source.field, m.source.variable, dateStart, dateEnd)
       : getMetricData(m.source.field, m.source.variable, chart.time_range);
 
@@ -291,7 +325,7 @@ function renderComboChart(
 
     // Comparison: add previous-period dataset if enabled for this series or globally
     const wantsComparison = s.comparison ?? chart.comparison;
-    if (wantsComparison && m.prev_available && !(chart.date_filter && filterActive)) {
+    if (wantsComparison && m.prev_available && !chart.date_filter) {
       const prev = getPrevMetricData(m.source.field, m.source.variable, chart.time_range);
       if (prev) {
         const prevColor = COMBO_PALETTE[colorIdx % COMBO_PALETTE.length];
@@ -386,6 +420,19 @@ function renderComboChart(
               </span>
             );
           })}
+          {onToggleAI && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleAI(); }}
+              title={isSelected ? 'Deselect from AI assistant' : 'Send to AI assistant'}
+              className={`transition-opacity ${
+                isSelected
+                  ? 'text-accent opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 text-muted hover:text-accent'
+              }`}
+            >
+              <MessageSquare size={14} />
+            </button>
+          )}
           <button
             onClick={() => onDelete(chart.id)}
             className="opacity-0 group-hover:opacity-100 text-muted hover:text-red-400 transition-opacity"
@@ -398,10 +445,12 @@ function renderComboChart(
         <DateFilterBar
           dateStart={dateStart}
           dateEnd={dateEnd}
-          filterActive={filterActive}
-          setDateStart={setDateStart}
-          setDateEnd={setDateEnd}
-          setFilterActive={setFilterActive}
+          wasModified={wasModified}
+          defaultStart={defaultStart}
+          defaultEnd={defaultEnd}
+          setDateStart={(v) => { setDateStart(v); setWasModified(true); }}
+          setDateEnd={(v) => { setDateEnd(v); setWasModified(true); }}
+          onReset={() => { setDateStart(defaultStart); setDateEnd(defaultEnd); setWasModified(false); }}
         />
       )}
       <div className="flex-1 min-h-0">
